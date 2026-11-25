@@ -8,7 +8,7 @@ jobs:
     steps:
       - name: Free disk
         run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
-      - name: Fetch kernel source
+      - name: Fetch kernel source (cybert / MT6897, 6.1.115)
         run: |
           git clone --depth 1 --branch MMI-W1VV36H.7-21-5 \
             https://github.com/MotorolaMobilityLLC/kernel-mtk.git ksrc
@@ -30,7 +30,7 @@ jobs:
           cd ksrc
           make ARCH=arm64 LLVM=1 O=out gki_defconfig
           scripts/config --file out/.config -d LOCALVERSION_AUTO
-          scripts/config --file out/.config --set-str LOCALVERSION "-g32fd20834ef3-ab13251582"
+          scripts/config --file out/.config --set-str LOCALVERSION "-android14-11-g32fd20834ef3-ab13251582"
           make ARCH=arm64 LLVM=1 O=out olddefconfig
       - name: Build
         run: |
@@ -38,11 +38,14 @@ jobs:
           cd ksrc
           make ARCH=arm64 LLVM=1 O=out -j$(nproc) Image Image.lz4 2>&1 | tee build.log
           ls -l out/arch/arm64/boot/
-      - name: Upload
+      - name: Package
         uses: actions/upload-artifact@v4
         with:
           name: cybert-kernel-image
           path: |
             ksrc/out/arch/arm64/boot/Image
             ksrc/out/arch/arm64/boot/Image.lz4
+            ksrc/out/.config
+            ksrc/out/include/generated/utsrelease.h
+            ksrc/out/Module.symvers
             ksrc/build.log
