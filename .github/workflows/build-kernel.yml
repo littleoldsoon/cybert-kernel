@@ -56,7 +56,7 @@ jobs:
           make ARCH=arm64 LLVM=1 O=out gki_defconfig
           scripts/config --file out/.config -d LOCALVERSION_AUTO
           scripts/config --file out/.config --set-str LOCALVERSION "-android14-11-g32fd20834ef3-ab13251582"
-          scripts/config --file out/.config -e TCP_CONG_ADVANCED -e TCP_CONG_BBR -e NET_SCH_CAKE -e NET_SCH_FQ -e NET_SCH_FQ_CODEL -e NET_SCH_INGRESS -e NET_CLS_ACT -e CRYPTO_LZ4HC -d CFI_CLANG -d SHADOW_CALL_STACK -d WERROR -d LTO_NONE -d LTO_CLANG_FULL -e LTO_CLANG_THIN
+          scripts/config --file out/.config -e TCP_CONG_ADVANCED -e TCP_CONG_BBR -e NET_SCH_CAKE -e NET_SCH_FQ -e NET_SCH_FQ_CODEL -e NET_SCH_INGRESS -e NET_CLS_ACT -e CRYPTO_LZ4HC -d WERROR -d LTO_NONE -d LTO_CLANG_FULL -e LTO_CLANG_THIN -d TRIM_UNUSED_KSYMS
           scripts/config --file out/.config --set-str DEFAULT_TCP_CONG "bbr"
           make ARCH=arm64 LLVM=1 O=out olddefconfig
       - name: Build
