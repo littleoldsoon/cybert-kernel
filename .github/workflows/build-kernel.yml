@@ -1,0 +1,48 @@
+name: build-cybert-kernel
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Free disk
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+      - name: Fetch kernel source
+        run: |
+          git clone --depth 1 --branch MMI-W1VV36H.7-21-5 \
+            https://github.com/MotorolaMobilityLLC/kernel-mtk.git ksrc
+      - name: Fetch AOSP clang r487747c
+        run: |
+          git clone --filter=blob:none --no-checkout --depth 1 \
+            -b android14-release \
+            https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clangrepo
+          cd clangrepo
+          git sparse-checkout init --cone
+          git sparse-checkout set clang-r487747c
+          git checkout FETCH_HEAD
+          ./clang-r487747c/bin/clang --version
+      - name: Host tools
+        run: sudo apt-get update && sudo apt-get install -y bison flex bc libelf-dev libssl-dev
+      - name: Configure
+        run: |
+          export PATH=$PWD/clangrepo/clang-r487747c/bin:$PATH
+          cd ksrc
+          make ARCH=arm64 LLVM=1 O=out gki_defconfig
+          scripts/config --file out/.config -d LOCALVERSION_AUTO
+          scripts/config --file out/.config --set-str LOCALVERSION "-g32fd20834ef3-ab13251582"
+          make ARCH=arm64 LLVM=1 O=out olddefconfig
+      - name: Build
+        run: |
+          export PATH=$PWD/clangrepo/clang-r487747c/bin:$PATH
+          cd ksrc
+          make ARCH=arm64 LLVM=1 O=out -j$(nproc) Image Image.lz4 2>&1 | tee build.log
+          ls -l out/arch/arm64/boot/
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: cybert-kernel-image
+          path: |
+            ksrc/out/arch/arm64/boot/Image
+            ksrc/out/arch/arm64/boot/Image.lz4
+            ksrc/build.log
