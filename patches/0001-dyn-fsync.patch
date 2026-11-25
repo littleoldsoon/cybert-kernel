@@ -1,0 +1,52 @@
+diff --git a/fs/sync.c b/fs/sync.c
+index df95543..7a51d7a 100644
+--- a/fs/sync.c
++++ b/fs/sync.c
+@@ -166,6 +166,8 @@ SYSCALL_DEFINE1(syncfs, int, fd)
+ 	return ret ? ret : ret2;
+ }
+ 
++int dyn_fsync_enabled __read_mostly = 1;
++
+ /**
+  * vfs_fsync_range - helper to sync a range of data & metadata to disk
+  * @file:		file to sync
+@@ -181,6 +183,9 @@ int vfs_fsync_range(struct file *file, loff_t start, loff_t end, int datasync)
+ {
+ 	struct inode *inode = file->f_mapping->host;
+ 
++	if (!dyn_fsync_enabled)
++		return 0;
++
+ 	if (!file->f_op->fsync)
+ 		return -EINVAL;
+ 	if (!datasync && (inode->i_state & I_DIRTY_TIME))
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index c6d9dec..0ba1227 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -2094,6 +2094,8 @@ static struct ctl_table kern_table[] = {
+ 	{ }
+ };
+ 
++extern int dyn_fsync_enabled;
++
+ static struct ctl_table vm_table[] = {
+ 	{
+ 		.procname	= "overcommit_memory",
+@@ -2143,6 +2145,15 @@ static struct ctl_table vm_table[] = {
+ 		.extra1		= SYSCTL_ZERO,
+ 		.extra2		= SYSCTL_TWO_HUNDRED,
+ 	},
++	{
++		.procname	= "dyn_fsync",
++		.data		= &dyn_fsync_enabled,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= SYSCTL_ZERO,
++		.extra2		= SYSCTL_ONE,
++	},
+ #ifdef CONFIG_NUMA
+ 	{
+ 		.procname	= "numa_stat",
