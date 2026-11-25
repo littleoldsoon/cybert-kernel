@@ -12,6 +12,10 @@ jobs:
         run: |
           git clone --depth 1 --branch MMI-W1VV36H.7-21-5 \
             https://github.com/MotorolaMobilityLLC/kernel-mtk.git ksrc
+      - name: Apply patches
+        run: |
+          cd ksrc
+          git apply "$GITHUB_WORKSPACE/patches/0001-dyn-fsync.patch"
       - name: Fetch AOSP clang r487747c
         run: |
           mkdir clangrepo && cd clangrepo
@@ -31,6 +35,7 @@ jobs:
           make ARCH=arm64 LLVM=1 O=out gki_defconfig
           scripts/config --file out/.config -d LOCALVERSION_AUTO
           scripts/config --file out/.config --set-str LOCALVERSION "-android14-11-g32fd20834ef3-ab13251582"
+          scripts/config --file out/.config -e TCP_CONG_BBR -e NET_SCH_CAKE -e NET_SCH_FQ -e NET_SCH_FQ_CODEL -e NET_SCH_INGRESS -e NET_CLS_ACT -e CRYPTO_LZ4HC
           make ARCH=arm64 LLVM=1 O=out olddefconfig
       - name: Build
         run: |
