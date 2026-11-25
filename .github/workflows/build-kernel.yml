@@ -12,10 +12,31 @@ jobs:
         run: |
           git clone --depth 1 --branch MMI-W1VV36H.7-21-5 \
             https://github.com/MotorolaMobilityLLC/kernel-mtk.git ksrc
-      - name: Apply patches
+      - name: Patch dyn_fsync
         run: |
           cd ksrc
-          git apply "$GITHUB_WORKSPACE/patches/0001-dyn-fsync.patch"
+          python3 - <<'PY'
+          p='fs/sync.c'
+          s=open(p).read()
+          a='int vfs_fsync_range(struct file *file, loff_t start, loff_t end, int datasync)\n{\n\tstruct inode *inode = file->f_mapping->host;\n'
+          assert s.count(a)==1
+          s=s.replace(a, a+'\tif (!dyn_fsync_enabled)\n\t\treturn 0;\n\n',1)
+          b='/**\n * vfs_fsync_range - helper to sync a range of data & metadata to disk'
+          assert s.count(b)==1
+          s=s.replace(b,'int dyn_fsync_enabled __read_mostly = 1;\n\n'+b,1)
+          open(p,'w').write(s)
+          p='kernel/sysctl.c'
+          s=open(p).read()
+          c='static struct ctl_table vm_table[] = {'
+          assert s.count(c)==1
+          s=s.replace(c,'extern int dyn_fsync_enabled;\n\n'+c,1)
+          d='\t\t.extra2\t\t= SYSCTL_TWO_HUNDRED,\n\t},\n#ifdef CONFIG_NUMA\n'
+          assert s.count(d)==1
+          e='\t\t.extra2\t\t= SYSCTL_TWO_HUNDRED,\n\t},\n\t{\n\t\t.procname\t= "dyn_fsync",\n\t\t.data\t\t= &dyn_fsync_enabled,\n\t\t.maxlen\t\t= sizeof(int),\n\t\t.mode\t\t= 0644,\n\t\t.proc_handler\t= proc_dointvec_minmax,\n\t\t.extra1\t\t= SYSCTL_ZERO,\n\t\t.extra2\t\t= SYSCTL_ONE,\n\t},\n#ifdef CONFIG_NUMA\n'
+          s=s.replace(d,e,1)
+          open(p,'w').write(s)
+          print('dyn_fsync patched')
+          PY
       - name: Fetch AOSP clang r487747c
         run: |
           mkdir clangrepo && cd clangrepo
