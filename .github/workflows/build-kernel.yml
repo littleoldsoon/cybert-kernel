@@ -14,12 +14,12 @@ jobs:
             https://github.com/MotorolaMobilityLLC/kernel-mtk.git ksrc
       - name: Fetch AOSP clang r487747c
         run: |
-          git clone --filter=blob:none --no-checkout --depth 1 \
-            -b android14-release \
-            https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clangrepo
-          cd clangrepo
+          mkdir clangrepo && cd clangrepo
+          git init -q
+          git remote add origin https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
           git sparse-checkout init --cone
           git sparse-checkout set clang-r487747c
+          git fetch --depth 1 --filter=blob:none origin android14-release
           git checkout FETCH_HEAD
           ./clang-r487747c/bin/clang --version
       - name: Host tools
