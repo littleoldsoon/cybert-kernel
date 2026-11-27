@@ -49,28 +49,47 @@ jobs:
           open(p,'w').write(s)
           print('dyn_fsync patched')
           PY
-      - name: Switch f2fs to v6.6
+      - name: Patch f2fs 6.6 compat
         run: |
-          git clone --filter=blob:none --no-checkout --depth 1 -b v6.6 \
-            https://github.com/torvalds/linux linux66
-          cd linux66
-          git sparse-checkout init --cone
-          git sparse-checkout set fs/f2fs
-          git checkout v6.6
-          rsync -a --delete fs/f2fs/ ../ksrc/fs/f2fs/
-          cd ../ksrc
+          cd ksrc
           python3 - <<'PY'
-          import re
-          p='fs/f2fs/super.c'
+          # 1) fgf_t type (6.6 pagemap)
+          p='include/linux/pagemap.h'
           s=open(p).read()
-          s=s.replace('blk_mode_t mode = sb_open_mode(sbi->sb->s_flags);',
-                      'fmode_t mode = (sbi->sb->s_flags & SB_RDONLY) ? FMODE_READ : (FMODE_READ | FMODE_WRITE);')
-          s=re.sub(r'blkdev_get_by_path\(FDEV\(i\)\.path,\s*mode, sbi->sb, NULL\)',
-                   'blkdev_get_by_path(FDEV(i).path, mode, sbi->sb)', s)
-          s=s.replace('blkdev_put(FDEV(i).bdev, sbi->sb);',
-                      'blkdev_put(FDEV(i).bdev, FMODE_READ | FMODE_WRITE);')
+          if 'typedef unsigned int fgf_t;' not in s:
+              a='#define FGP_ACCESSED'
+              assert s.count(a)==1, s.count(a)
+              s=s.replace(a,'typedef unsigned int fgf_t;\n\n'+a,1)
+              open(p,'w').write(s)
+          # 2) mnt_idmap / blkdev shims + dotdot rename
+          p='fs/f2fs/f2fs.h'
+          s=open(p).read()
+          a='#include <linux/fsverity.h>'
+          assert s.count(a)==1, s.count(a)
+          shim='''
+          /* ---- 6.6 f2fs on 6.1 compat ---- */
+          #include <linux/fs.h>
+          #define mnt_idmap user_namespace
+          #define nop_mnt_idmap init_user_ns
+          #define file_mnt_idmap(filp) file_mnt_user_ns(filp)
+          static inline struct block_device *f2fs_compat_bdev_open(const char *path,
+          		fmode_t mode, void *holder, void *hops)
+          {
+          	return blkdev_get_by_path(path, mode, holder);
+          }
+          #define blkdev_get_by_path(path, mode, holder, hops) \
+          	f2fs_compat_bdev_open(path, mode, holder, hops)
+          static inline void f2fs_compat_bdev_put(struct block_device *bdev, void *holder)
+          {
+          	blkdev_put(bdev, FMODE_READ | FMODE_WRITE);
+          }
+          #define blkdev_put(bdev, holder) f2fs_compat_bdev_put(bdev, holder)
+          '''
+          s=s.replace(a, a+shim,1)
+          s=s.replace('static inline bool is_dot_dotdot(const u8 *name, size_t len)',
+                      'static inline bool f2fs_is_dot_dotdot_compat(const u8 *name, size_t len)',1)
           open(p,'w').write(s)
-          print('f2fs66 bdev compat applied')
+          print('f2fs 6.6 compat applied')
           PY
       - name: Fetch AOSP clang r487747c
         run: |
