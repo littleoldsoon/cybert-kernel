@@ -21,12 +21,16 @@ jobs:
           git init -q
           git remote add origin https://github.com/torvalds/linux
           git sparse-checkout init --cone
-          git sparse-checkout set fs/f2fs
+          git sparse-checkout set fs/f2fs include/linux/f2fs_fs.h
           git fetch --depth 1 --filter=blob:none origin v6.6
           git checkout FETCH_HEAD
           rsync -a --delete fs/f2fs/ "$GITHUB_WORKSPACE/ksrc/fs/f2fs/"
+          cp include/linux/f2fs_fs.h "$GITHUB_WORKSPACE/ksrc/include/linux/f2fs_fs.h"
           if grep -q "sbi->sb->s_mode" "$GITHUB_WORKSPACE/ksrc/fs/f2fs/super.c"; then
             echo "ERROR: f2fs 6.6 sync did NOT apply"; exit 1
+          fi
+          if ! grep -q "NIDS_PER_BLOCK.*1018" "$GITHUB_WORKSPACE/ksrc/include/linux/f2fs_fs.h"; then
+            echo "ERROR: f2fs_fs.h 6.6 sync did NOT apply"; exit 1
           fi
 
       - name: Patch f2fs defaults
