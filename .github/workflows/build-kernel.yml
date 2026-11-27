@@ -67,7 +67,7 @@ jobs:
         run: |
           cd ksrc
           python3 - <<'PY'
-          import re
+          import re, glob
           # 1) fgf_t
           p='include/linux/pagemap.h'
           s=open(p).read()
@@ -93,7 +93,7 @@ jobs:
           s=s.replace('static inline bool is_dot_dotdot(const u8 *name, size_t len)',
                       'static inline bool f2fs_is_dot_dotdot_compat(const u8 *name, size_t len)',1)
           open(p,'w').write(s)
-          # 3) super.c blkdev 调用点（严格匹配）
+          # 3) super.c blkdev 调用点
           p='fs/f2fs/super.c'
           s=open(p).read()
           s=re.sub(r'blkdev_get_by_path\(\s*([^,\n]+),\s*([^,\n]+),\s*([^,\n]+),\s*NULL\s*\)',
@@ -101,14 +101,14 @@ jobs:
           s=re.sub(r'blkdev_put\(\s*([^,\n]+),\s*sbi->sb\s*\)',
                    r'blkdev_put(\1, FMODE_READ | FMODE_WRITE)', s)
           open(p,'w').write(s)
-          # 4) file.c：generic_fillattr / get_acl / posix_acl_chmod
-          p='fs/f2fs/file.c'
-          s=open(p).read()
-          s=s.replace('generic_fillattr(idmap, request_mask, inode, stat);',
-                      'generic_fillattr(idmap, inode, stat);')
-          s=s.replace('.get_inode_acl', '.get_acl')
-          s=s.replace('posix_acl_chmod(idmap, dentry,', 'posix_acl_chmod(idmap, inode,')
-          open(p,'w').write(s)
+          # 4) 所有 .c：fillattr / get_acl / acl_chmod
+          for p in glob.glob('fs/f2fs/*.c'):
+              s=open(p).read()
+              n=s.replace('generic_fillattr(idmap, request_mask, inode, stat);',
+                          'generic_fillattr(idmap, inode, stat);')
+              n=n.replace('.get_inode_acl', '.get_acl')
+              n=n.replace('posix_acl_chmod(idmap, dentry,', 'posix_acl_chmod(idmap, inode,')
+              if n!=s: open(p,'w').write(n)
           # 5) acl.c：set_acl 改收 inode
           p='fs/f2fs/acl.c'
           s=open(p).read()
@@ -128,7 +128,8 @@ jobs:
           s=s.replace(a,'extern int f2fs_set_acl(struct mnt_idmap *, struct inode *,',1)
           open(p,'w').write(s)
           # 7) 自检
-          bad=[f for f in ('fs/f2fs/super.c','fs/f2fs/file.c') if 'f2fs_err(sbi)' in open(f).read()]
+          bad=[f for f in ('fs/f2fs/super.c','fs/f2fs/file.c','fs/f2fs/namei.c')
+               if 'f2fs_err(sbi)' in open(f).read()]
           if bad: raise SystemExit('SUSPECT: '+','.join(bad))
           print('f2fs 6.6 compat applied')
           PY
