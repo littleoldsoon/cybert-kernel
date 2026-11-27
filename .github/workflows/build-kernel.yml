@@ -104,6 +104,13 @@ jobs:
           scripts/config --file out/.config -e TCP_CONG_ADVANCED -e TCP_CONG_BBR -e NET_SCH_CAKE -e NET_SCH_FQ -e NET_SCH_FQ_CODEL -e NET_SCH_INGRESS -e NET_CLS_ACT -e CRYPTO_LZ4HC -d WERROR -d LTO_NONE -d LTO_CLANG_FULL -e LTO_CLANG_THIN -d TRIM_UNUSED_KSYMS
           scripts/config --file out/.config --set-str DEFAULT_TCP_CONG "bbr"
           make ARCH=arm64 LLVM=1 O=out olddefconfig
+      - name: Dump f2fs super.c context
+        if: always()
+        run: |
+          echo "===== lines 4115-4135 ====="
+          sed -n '4115,4135p' ksrc/fs/f2fs/super.c
+          echo "===== bare f2fs_err(sbi) ====="
+          grep -n "f2fs_err(sbi)" ksrc/fs/f2fs/super.c || true
       - name: Build
         run: |
           export PATH=$PWD/clangrepo/clang-r487747c/bin:$PATH
@@ -121,4 +128,7 @@ jobs:
             ksrc/out/.config
             ksrc/out/include/generated/utsrelease.h
             ksrc/out/Module.symvers
+            ksrc/build.log
+            ksrc/fs/f2fs/super.c
+            ksrc/fs/f2fs/f2fs.h
             ksrc/build.log
