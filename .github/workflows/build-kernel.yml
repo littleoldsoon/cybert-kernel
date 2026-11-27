@@ -68,6 +68,7 @@ jobs:
           cd ksrc
           python3 - <<'PY'
           import re
+          # 1) fgf_t
           p='include/linux/pagemap.h'
           s=open(p).read()
           if 'typedef unsigned int fgf_t;' not in s:
@@ -75,15 +76,24 @@ jobs:
               assert s.count(a)==1, s.count(a)
               s=s.replace(a,'typedef unsigned int fgf_t;\n\n'+a,1)
               open(p,'w').write(s)
+          # 2) f2fs.h shims
           p='fs/f2fs/f2fs.h'
           s=open(p).read()
           a='#include <linux/fsverity.h>'
           assert s.count(a)==1, s.count(a)
-          shim='\n/* ---- 6.6 f2fs on 6.1 compat ---- */\n#include <linux/fs.h>\n#define mnt_idmap user_namespace\n#define nop_mnt_idmap init_user_ns\n#define file_mnt_idmap(filp) file_mnt_user_ns(filp)\n'
+          shim=('\n/* ---- 6.6 f2fs on 6.1 compat ---- */\n'
+                '#include <linux/fs.h>\n'
+                '#include <linux/mm.h>\n'
+                '#define mnt_idmap user_namespace\n'
+                '#define nop_mnt_idmap init_user_ns\n'
+                '#define file_mnt_idmap(filp) file_mnt_user_ns(filp)\n'
+                '#define vmf_fs_error vmf_error\n'
+                '#define filemap_splice_read generic_file_splice_read\n')
           s=s.replace(a, a+shim,1)
           s=s.replace('static inline bool is_dot_dotdot(const u8 *name, size_t len)',
                       'static inline bool f2fs_is_dot_dotdot_compat(const u8 *name, size_t len)',1)
           open(p,'w').write(s)
+          # 3) super.c blkdev 调用点（严格匹配）
           p='fs/f2fs/super.c'
           s=open(p).read()
           s=re.sub(r'blkdev_get_by_path\(\s*([^,\n]+),\s*([^,\n]+),\s*([^,\n]+),\s*NULL\s*\)',
@@ -91,8 +101,35 @@ jobs:
           s=re.sub(r'blkdev_put\(\s*([^,\n]+),\s*sbi->sb\s*\)',
                    r'blkdev_put(\1, FMODE_READ | FMODE_WRITE)', s)
           open(p,'w').write(s)
-          if 'f2fs_err(sbi)' in s:
-              raise SystemExit('SUSPECT: bare f2fs_err(sbi) after compat')
+          # 4) file.c：generic_fillattr / get_acl / posix_acl_chmod
+          p='fs/f2fs/file.c'
+          s=open(p).read()
+          s=s.replace('generic_fillattr(idmap, request_mask, inode, stat);',
+                      'generic_fillattr(idmap, inode, stat);')
+          s=s.replace('.get_inode_acl', '.get_acl')
+          s=s.replace('posix_acl_chmod(idmap, dentry,', 'posix_acl_chmod(idmap, inode,')
+          open(p,'w').write(s)
+          # 5) acl.c：set_acl 改收 inode
+          p='fs/f2fs/acl.c'
+          s=open(p).read()
+          a=('int f2fs_set_acl(struct mnt_idmap *idmap, struct dentry *dentry,\n'
+             '\t\t struct posix_acl *acl, int type)\n'
+             '{\n\tstruct inode *inode = d_inode(dentry);\n')
+          assert s.count(a)==1, s.count(a)
+          s=s.replace(a,
+             ('int f2fs_set_acl(struct mnt_idmap *idmap, struct inode *inode,\n'
+              '\t\t struct posix_acl *acl, int type)\n{\n'),1)
+          open(p,'w').write(s)
+          # 6) acl.h 原型
+          p='fs/f2fs/acl.h'
+          s=open(p).read()
+          a='extern int f2fs_set_acl(struct mnt_idmap *, struct dentry *,'
+          assert s.count(a)==1, s.count(a)
+          s=s.replace(a,'extern int f2fs_set_acl(struct mnt_idmap *, struct inode *,',1)
+          open(p,'w').write(s)
+          # 7) 自检
+          bad=[f for f in ('fs/f2fs/super.c','fs/f2fs/file.c') if 'f2fs_err(sbi)' in open(f).read()]
+          if bad: raise SystemExit('SUSPECT: '+','.join(bad))
           print('f2fs 6.6 compat applied')
           PY
       - name: Fetch AOSP clang r487747c
