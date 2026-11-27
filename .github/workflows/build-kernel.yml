@@ -8,10 +8,12 @@ jobs:
     steps:
       - name: Free disk
         run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+
       - name: Fetch kernel source (cybert / MT6897, 6.1.115)
         run: |
           git clone --depth 1 --branch MMI-W1VV36H.7-21-5 \
             https://github.com/MotorolaMobilityLLC/kernel-mtk.git ksrc
+
       - name: Sync f2fs from v6.6
         run: |
           cd /tmp
@@ -26,6 +28,7 @@ jobs:
           if grep -q "sbi->sb->s_mode" "$GITHUB_WORKSPACE/ksrc/fs/f2fs/super.c"; then
             echo "ERROR: f2fs 6.6 sync did NOT apply"; exit 1
           fi
+
       - name: Patch f2fs defaults
         run: |
           cd ksrc
@@ -38,6 +41,7 @@ jobs:
           open(p,'w').write(s)
           print('f2fs defaults patched')
           PY
+
       - name: Patch dyn_fsync
         run: |
           cd ksrc
@@ -45,24 +49,33 @@ jobs:
           p='fs/sync.c'
           s=open(p).read()
           a='int vfs_fsync_range(struct file *file, loff_t start, loff_t end, int datasync)\n{\n\tstruct inode *inode = file->f_mapping->host;\n'
-          assert s.count(a)==1
+          assert s.count(a)==1, s.count(a)
           s=s.replace(a, a+'\tif (!dyn_fsync_enabled)\n\t\treturn 0;\n\n',1)
           b='/**\n * vfs_fsync_range - helper to sync a range of data & metadata to disk'
-          assert s.count(b)==1
+          assert s.count(b)==1, s.count(b)
           s=s.replace(b,'int dyn_fsync_enabled __read_mostly = 1;\n\n'+b,1)
           open(p,'w').write(s)
           p='kernel/sysctl.c'
           s=open(p).read()
           c='static struct ctl_table vm_table[] = {'
-          assert s.count(c)==1
+          assert s.count(c)==1, s.count(c)
           s=s.replace(c,'extern int dyn_fsync_enabled;\n\n'+c,1)
           d='\t\t.extra2\t\t= SYSCTL_TWO_HUNDRED,\n\t},\n#ifdef CONFIG_NUMA\n'
-          assert s.count(d)==1
-          e='\t\t.extra2\t\t= SYSCTL_TWO_HUNDRED,\n\t},\n\t{\n\t\t.procname\t= "dyn_fsync",\n\t\t.data\t\t= &dyn_fsync_enabled,\n\t\t.maxlen\t\t= sizeof(int),\n\t\t.mode\t\t= 0644,\n\t\t.proc_handler\t= proc_dointvec_minmax,\n\t\t.extra1\t\t= SYSCTL_ZERO,\n\t\t.extra2\t\t= SYSCTL_ONE,\n\t},\n#ifdef CONFIG_NUMA\n'
+          assert s.count(d)==1, s.count(d)
+          e=('\t\t.extra2\t\t= SYSCTL_TWO_HUNDRED,\n\t},\n\t{\n'
+             '\t\t.procname\t= "dyn_fsync",\n'
+             '\t\t.data\t\t= &dyn_fsync_enabled,\n'
+             '\t\t.maxlen\t\t= sizeof(int),\n'
+             '\t\t.mode\t\t= 0644,\n'
+             '\t\t.proc_handler\t= proc_dointvec_minmax,\n'
+             '\t\t.extra1\t\t= SYSCTL_ZERO,\n'
+             '\t\t.extra2\t\t= SYSCTL_ONE,\n'
+             '\t},\n#ifdef CONFIG_NUMA\n')
           s=s.replace(d,e,1)
           open(p,'w').write(s)
           print('dyn_fsync patched')
           PY
+
       - name: Patch f2fs 6.6 compat
         run: |
           cd ksrc
@@ -76,7 +89,7 @@ jobs:
               assert s.count(a)==1, s.count(a)
               s=s.replace(a,'typedef unsigned int fgf_t;\n\n'+a,1)
               open(p,'w').write(s)
-          # 2) f2fs.h shims
+          # 2) f2fs.h shims + cp_reason enum
           p='fs/f2fs/f2fs.h'
           s=open(p).read()
           a='#include <linux/fsverity.h>'
@@ -92,16 +105,20 @@ jobs:
           s=s.replace(a, a+shim,1)
           s=s.replace('static inline bool is_dot_dotdot(const u8 *name, size_t len)',
                       'static inline bool f2fs_is_dot_dotdot_compat(const u8 *name, size_t len)',1)
+          s=s.replace('\tCP_RECOVER_DIR,\n};',
+                      '\tCP_RECOVER_DIR,\n\tCP_XATTR_DIR,\n};',1)
           open(p,'w').write(s)
-          # 3) super.c blkdev 调用点
+          # 3) super.c blkdev/blk_mode
           p='fs/f2fs/super.c'
           s=open(p).read()
           s=re.sub(r'blkdev_get_by_path\(\s*([^,\n]+),\s*([^,\n]+),\s*([^,\n]+),\s*NULL\s*\)',
                    r'blkdev_get_by_path(\1, \2, \3)', s)
           s=re.sub(r'blkdev_put\(\s*([^,\n]+),\s*sbi->sb\s*\)',
                    r'blkdev_put(\1, FMODE_READ | FMODE_WRITE)', s)
+          s=s.replace('blk_mode_t mode = sb_open_mode(sbi->sb->s_flags);',
+                      'fmode_t mode = sbi->sb->s_mode;',1)
           open(p,'w').write(s)
-          # 4) 所有 .c：fillattr / get_acl / acl_chmod
+          # 4) all .c: fillattr / get_acl / acl_chmod
           for p in glob.glob('fs/f2fs/*.c'):
               s=open(p).read()
               n=s.replace('generic_fillattr(idmap, request_mask, inode, stat);',
@@ -109,7 +126,7 @@ jobs:
               n=n.replace('.get_inode_acl', '.get_acl')
               n=n.replace('posix_acl_chmod(idmap, dentry,', 'posix_acl_chmod(idmap, inode,')
               if n!=s: open(p,'w').write(n)
-          # 5) acl.c：set_acl 改收 inode
+          # 5) acl.c set_acl takes inode
           p='fs/f2fs/acl.c'
           s=open(p).read()
           a=('int f2fs_set_acl(struct mnt_idmap *idmap, struct dentry *dentry,\n'
@@ -120,19 +137,20 @@ jobs:
              ('int f2fs_set_acl(struct mnt_idmap *idmap, struct inode *inode,\n'
               '\t\t struct posix_acl *acl, int type)\n{\n'),1)
           open(p,'w').write(s)
-          # 6) acl.h 原型
+          # 6) acl.h prototype
           p='fs/f2fs/acl.h'
           s=open(p).read()
           a='extern int f2fs_set_acl(struct mnt_idmap *, struct dentry *,'
           assert s.count(a)==1, s.count(a)
           s=s.replace(a,'extern int f2fs_set_acl(struct mnt_idmap *, struct inode *,',1)
           open(p,'w').write(s)
-          # 7) 自检
+          # 7) sanity
           bad=[f for f in ('fs/f2fs/super.c','fs/f2fs/file.c','fs/f2fs/namei.c')
                if 'f2fs_err(sbi)' in open(f).read()]
           if bad: raise SystemExit('SUSPECT: '+','.join(bad))
           print('f2fs 6.6 compat applied')
           PY
+
       - name: Fetch AOSP clang r487747c
         run: |
           mkdir clangrepo && cd clangrepo
@@ -143,8 +161,10 @@ jobs:
           git fetch --depth 1 --filter=blob:none origin android14-release
           git checkout FETCH_HEAD
           ./clang-r487747c/bin/clang --version
+
       - name: Host tools
         run: sudo apt-get update && sudo apt-get install -y bison flex bc libelf-dev libssl-dev dwarves rsync
+
       - name: Configure
         run: |
           export PATH=$PWD/clangrepo/clang-r487747c/bin:$PATH
@@ -154,17 +174,20 @@ jobs:
           scripts/config --file out/.config --set-str LOCALVERSION "-android14-11-g32fd20834ef3-ab13251582"
           scripts/config --file out/.config -e TCP_CONG_ADVANCED -e TCP_CONG_BBR -e NET_SCH_CAKE -e NET_SCH_FQ -e NET_SCH_FQ_CODEL -e NET_SCH_INGRESS -e NET_CLS_ACT -e CRYPTO_LZ4HC -d WERROR -d LTO_NONE -d LTO_CLANG_FULL -e LTO_CLANG_THIN -d TRIM_UNUSED_KSYMS
           make ARCH=arm64 LLVM=1 O=out olddefconfig
+
       - name: Dump f2fs context
         if: always()
         run: |
           sed -n '4105,4135p' ksrc/fs/f2fs/super.c
           grep -n "f2fs_err(sbi)" ksrc/fs/f2fs/super.c || true
+
       - name: Build
         run: |
           export PATH=$PWD/clangrepo/clang-r487747c/bin:$PATH
           cd ksrc
           make ARCH=arm64 LLVM=1 O=out -j$(nproc) Image Image.lz4 modules 2>&1 | tee build.log
           ls -l out/arch/arm64/boot/
+
       - name: Upload
         if: always()
         uses: actions/upload-artifact@v4
