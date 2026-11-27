@@ -53,7 +53,8 @@ jobs:
         run: |
           cd ksrc
           python3 - <<'PY'
-          # 1) fgf_t type (6.6 pagemap)
+          import re
+          # 1) fgf_t (6.6 pagemap API)
           p='include/linux/pagemap.h'
           s=open(p).read()
           if 'typedef unsigned int fgf_t;' not in s:
@@ -61,33 +62,23 @@ jobs:
               assert s.count(a)==1, s.count(a)
               s=s.replace(a,'typedef unsigned int fgf_t;\n\n'+a,1)
               open(p,'w').write(s)
-          # 2) mnt_idmap / blkdev shims + dotdot rename
+          # 2) mnt_idmap shims (single-line only) + dotdot rename
           p='fs/f2fs/f2fs.h'
           s=open(p).read()
           a='#include <linux/fsverity.h>'
           assert s.count(a)==1, s.count(a)
-          shim='''
-          /* ---- 6.6 f2fs on 6.1 compat ---- */
-          #include <linux/fs.h>
-          #define mnt_idmap user_namespace
-          #define nop_mnt_idmap init_user_ns
-          #define file_mnt_idmap(filp) file_mnt_user_ns(filp)
-          static inline struct block_device *f2fs_compat_bdev_open(const char *path,
-          		fmode_t mode, void *holder, void *hops)
-          {
-          	return blkdev_get_by_path(path, mode, holder);
-          }
-          #define blkdev_get_by_path(path, mode, holder, hops) \
-          	f2fs_compat_bdev_open(path, mode, holder, hops)
-          static inline void f2fs_compat_bdev_put(struct block_device *bdev, void *holder)
-          {
-          	blkdev_put(bdev, FMODE_READ | FMODE_WRITE);
-          }
-          #define blkdev_put(bdev, holder) f2fs_compat_bdev_put(bdev, holder)
-          '''
+          shim='\n/* ---- 6.6 f2fs on 6.1 compat ---- */\n#include <linux/fs.h>\n#define mnt_idmap user_namespace\n#define nop_mnt_idmap init_user_ns\n#define file_mnt_idmap(filp) file_mnt_user_ns(filp)\n'
           s=s.replace(a, a+shim,1)
           s=s.replace('static inline bool is_dot_dotdot(const u8 *name, size_t len)',
                       'static inline bool f2fs_is_dot_dotdot_compat(const u8 *name, size_t len)',1)
+          open(p,'w').write(s)
+          # 3) blkdev API call-site rewrite in super.c
+          p='fs/f2fs/super.c'
+          s=open(p).read()
+          s=re.sub(r'blkdev_get_by_path\(([^,]+),\s*([^,]+),\s*([^,]+),\s*[^)]+\)',
+                   r'blkdev_get_by_path(\1, \2, \3)', s, flags=re.S)
+          s=re.sub(r'blkdev_put\(([^,]+),\s*sbi->sb\)',
+                   r'blkdev_put(\1, FMODE_READ | FMODE_WRITE)', s)
           open(p,'w').write(s)
           print('f2fs 6.6 compat applied')
           PY
