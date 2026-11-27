@@ -49,6 +49,15 @@ jobs:
           open(p,'w').write(s)
           print('dyn_fsync patched')
           PY
+      - name: Switch f2fs to v6.6
+        run: |
+          git clone --filter=blob:none --no-checkout --depth 1 -b v6.6 \
+            https://github.com/torvalds/linux linux66
+          cd linux66
+          git sparse-checkout init --cone
+          git sparse-checkout set fs/f2fs
+          git checkout v6.6
+          rsync -a --delete fs/f2fs/ ../ksrc/fs/f2fs/
       - name: Fetch AOSP clang r487747c
         run: |
           mkdir clangrepo && cd clangrepo
