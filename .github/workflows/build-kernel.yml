@@ -125,6 +125,8 @@ jobs:
                           'generic_fillattr(idmap, inode, stat);')
               n=n.replace('.get_inode_acl', '.get_acl')
               n=n.replace('posix_acl_chmod(idmap, dentry,', 'posix_acl_chmod(idmap, inode,')
+              n=re.sub(r'freeze_super\(\s*([^,\n]+),\s*FREEZE_HOLDER_[A-Z_]+\)', r'freeze_super(\1)', n)
+              n=re.sub(r'thaw_super\(\s*([^,\n]+),\s*FREEZE_HOLDER_[A-Z_]+\)', r'thaw_super(\1)', n)
               if n!=s: open(p,'w').write(n)
           # 5) acl.c set_acl takes inode
           p='fs/f2fs/acl.c'
