@@ -154,7 +154,25 @@ jobs:
           assert s.count(a)==1, s.count(a)
           s=s.replace(a,'extern int f2fs_set_acl(struct mnt_idmap *, struct inode *,',1)
           open(p,'w').write(s)
-          # 7) sanity
+          # 7) xattr.c 6.1 ACL compat
+          p='fs/f2fs/xattr.c'
+          s=open(p).read()
+          s=s.replace('&nop_posix_acl_access','&posix_acl_access_xattr_handler')
+          s=s.replace('&nop_posix_acl_default','&posix_acl_default_xattr_handler')
+          s=s.replace('if (!xattr_handler_can_list(handler, dentry))',
+                      'if (!handler || (handler->list && !handler->list(dentry)))')
+          a=('const struct xattr_handler *f2fs_xattr_handlers[] = {\n'
+             '\t&f2fs_xattr_user_handler,\n')
+          b=('const struct xattr_handler *f2fs_xattr_handlers[] = {\n'
+             '\t&f2fs_xattr_user_handler,\n'
+             '#ifdef CONFIG_F2FS_FS_POSIX_ACL\n'
+             '\t&posix_acl_access_xattr_handler,\n'
+             '\t&posix_acl_default_xattr_handler,\n'
+             '#endif\n')
+          if s.count(a)==1:
+              s=s.replace(a,b,1)
+          open(p,'w').write(s)
+          # 8) sanity
           bad=[f for f in ('fs/f2fs/super.c','fs/f2fs/file.c','fs/f2fs/namei.c')
                if 'f2fs_err(sbi)' in open(f).read()]
           if bad: raise SystemExit('SUSPECT: '+','.join(bad))
