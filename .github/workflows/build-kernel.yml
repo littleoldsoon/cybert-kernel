@@ -4,7 +4,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Free disk
         run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
@@ -12,13 +12,27 @@ jobs:
         run: |
           git clone --depth 1 --branch MMI-W1VV36H.7-21-5 \
             https://github.com/MotorolaMobilityLLC/kernel-mtk.git ksrc
+      - name: Sync f2fs from v6.6
+        run: |
+          cd /tmp
+          rm -rf f2fs66 && mkdir f2fs66 && cd f2fs66
+          git init -q
+          git remote add origin https://github.com/torvalds/linux
+          git sparse-checkout init --cone
+          git sparse-checkout set fs/f2fs
+          git fetch --depth 1 --filter=blob:none origin v6.6
+          git checkout FETCH_HEAD
+          rsync -a --delete fs/f2fs/ "$GITHUB_WORKSPACE/ksrc/fs/f2fs/"
+          if grep -q "sbi->sb->s_mode" "$GITHUB_WORKSPACE/ksrc/fs/f2fs/super.c"; then
+            echo "ERROR: f2fs 6.6 sync did NOT apply"; exit 1
+          fi
       - name: Patch f2fs defaults
         run: |
           cd ksrc
           python3 - <<'PY'
           p='fs/f2fs/super.c'
           s=open(p).read()
-          a='\tclear_opt(sbi, DISABLE_CHECKPOINT);\n\tset_opt(sbi, MERGE_CHECKPOINT);\n'
+          a='\tset_opt(sbi, NOHEAP);\n\tset_opt(sbi, MERGE_CHECKPOINT);\n'
           assert s.count(a)==1, s.count(a)
           s=s.replace(a, a+'\tset_opt(sbi, GC_MERGE);\n\tset_opt(sbi, AGE_EXTENT_CACHE);\n',1)
           open(p,'w').write(s)
@@ -54,7 +68,6 @@ jobs:
           cd ksrc
           python3 - <<'PY'
           import re
-          # 1) fgf_t (6.6 pagemap API)
           p='include/linux/pagemap.h'
           s=open(p).read()
           if 'typedef unsigned int fgf_t;' not in s:
@@ -62,7 +75,6 @@ jobs:
               assert s.count(a)==1, s.count(a)
               s=s.replace(a,'typedef unsigned int fgf_t;\n\n'+a,1)
               open(p,'w').write(s)
-          # 2) mnt_idmap shims (single-line only) + dotdot rename
           p='fs/f2fs/f2fs.h'
           s=open(p).read()
           a='#include <linux/fsverity.h>'
@@ -72,14 +84,15 @@ jobs:
           s=s.replace('static inline bool is_dot_dotdot(const u8 *name, size_t len)',
                       'static inline bool f2fs_is_dot_dotdot_compat(const u8 *name, size_t len)',1)
           open(p,'w').write(s)
-          # 3) blkdev API call-site rewrite in super.c
           p='fs/f2fs/super.c'
           s=open(p).read()
-          s=re.sub(r'blkdev_get_by_path\(([^,]+),\s*([^,]+),\s*([^,]+),\s*[^)]+\)',
-                   r'blkdev_get_by_path(\1, \2, \3)', s, flags=re.S)
-          s=re.sub(r'blkdev_put\(([^,]+),\s*sbi->sb\)',
+          s=re.sub(r'blkdev_get_by_path\(\s*([^,\n]+),\s*([^,\n]+),\s*([^,\n]+),\s*NULL\s*\)',
+                   r'blkdev_get_by_path(\1, \2, \3)', s)
+          s=re.sub(r'blkdev_put\(\s*([^,\n]+),\s*sbi->sb\s*\)',
                    r'blkdev_put(\1, FMODE_READ | FMODE_WRITE)', s)
           open(p,'w').write(s)
+          if 'f2fs_err(sbi)' in s:
+              raise SystemExit('SUSPECT: bare f2fs_err(sbi) after compat')
           print('f2fs 6.6 compat applied')
           PY
       - name: Fetch AOSP clang r487747c
@@ -93,7 +106,7 @@ jobs:
           git checkout FETCH_HEAD
           ./clang-r487747c/bin/clang --version
       - name: Host tools
-        run: sudo apt-get update && sudo apt-get install -y bison flex bc libelf-dev libssl-dev dwarves
+        run: sudo apt-get update && sudo apt-get install -y bison flex bc libelf-dev libssl-dev dwarves rsync
       - name: Configure
         run: |
           export PATH=$PWD/clangrepo/clang-r487747c/bin:$PATH
@@ -102,14 +115,11 @@ jobs:
           scripts/config --file out/.config -d LOCALVERSION_AUTO
           scripts/config --file out/.config --set-str LOCALVERSION "-android14-11-g32fd20834ef3-ab13251582"
           scripts/config --file out/.config -e TCP_CONG_ADVANCED -e TCP_CONG_BBR -e NET_SCH_CAKE -e NET_SCH_FQ -e NET_SCH_FQ_CODEL -e NET_SCH_INGRESS -e NET_CLS_ACT -e CRYPTO_LZ4HC -d WERROR -d LTO_NONE -d LTO_CLANG_FULL -e LTO_CLANG_THIN -d TRIM_UNUSED_KSYMS
-          scripts/config --file out/.config --set-str DEFAULT_TCP_CONG "bbr"
           make ARCH=arm64 LLVM=1 O=out olddefconfig
-      - name: Dump f2fs super.c context
+      - name: Dump f2fs context
         if: always()
         run: |
-          echo "===== lines 4115-4135 ====="
-          sed -n '4115,4135p' ksrc/fs/f2fs/super.c
-          echo "===== bare f2fs_err(sbi) ====="
+          sed -n '4105,4135p' ksrc/fs/f2fs/super.c
           grep -n "f2fs_err(sbi)" ksrc/fs/f2fs/super.c || true
       - name: Build
         run: |
@@ -117,7 +127,8 @@ jobs:
           cd ksrc
           make ARCH=arm64 LLVM=1 O=out -j$(nproc) Image Image.lz4 modules 2>&1 | tee build.log
           ls -l out/arch/arm64/boot/
-      - name: Package
+      - name: Upload
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cybert-kernel-image
@@ -131,4 +142,3 @@ jobs:
             ksrc/build.log
             ksrc/fs/f2fs/super.c
             ksrc/fs/f2fs/f2fs.h
-            ksrc/build.log
