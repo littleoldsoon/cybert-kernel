@@ -58,6 +58,20 @@ jobs:
           git sparse-checkout set fs/f2fs
           git checkout v6.6
           rsync -a --delete fs/f2fs/ ../ksrc/fs/f2fs/
+          cd ../ksrc
+          python3 - <<'PY'
+          import re
+          p='fs/f2fs/super.c'
+          s=open(p).read()
+          s=s.replace('blk_mode_t mode = sb_open_mode(sbi->sb->s_flags);',
+                      'fmode_t mode = (sbi->sb->s_flags & SB_RDONLY) ? FMODE_READ : (FMODE_READ | FMODE_WRITE);')
+          s=re.sub(r'blkdev_get_by_path\(FDEV\(i\)\.path,\s*mode, sbi->sb, NULL\)',
+                   'blkdev_get_by_path(FDEV(i).path, mode, sbi->sb)', s)
+          s=s.replace('blkdev_put(FDEV(i).bdev, sbi->sb);',
+                      'blkdev_put(FDEV(i).bdev, FMODE_READ | FMODE_WRITE);')
+          open(p,'w').write(s)
+          print('f2fs66 bdev compat applied')
+          PY
       - name: Fetch AOSP clang r487747c
         run: |
           mkdir clangrepo && cd clangrepo
