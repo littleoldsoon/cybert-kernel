@@ -12,6 +12,18 @@ jobs:
         run: |
           git clone --depth 1 --branch MMI-W1VV36H.7-21-5 \
             https://github.com/MotorolaMobilityLLC/kernel-mtk.git ksrc
+      - name: Patch f2fs defaults
+        run: |
+          cd ksrc
+          python3 - <<'PY'
+          p='fs/f2fs/super.c'
+          s=open(p).read()
+          a='\tset_opt(sbi, MERGE_CHECKPOINT);\n'
+          assert s.count(a)==1
+          s=s.replace(a, a+'\tset_opt(sbi, GC_MERGE);\n\tset_opt(sbi, AGE_EXTENT_CACHE);\n',1)
+          open(p,'w').write(s)
+          print('f2fs defaults patched')
+          PY
       - name: Patch dyn_fsync
         run: |
           cd ksrc
